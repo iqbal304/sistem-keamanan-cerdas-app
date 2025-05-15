@@ -93,7 +93,7 @@ st.title("\U0001F512 Smart Security System")
 
 with st.sidebar:
     st.header("\u2699\ufe0f Pengaturan Sistem")
-    video_source = st.radio("**Sumber Video**", ["Webcam", "IP Camera"], index=0)
+    video_source = st.radio("**Sumber Video**", ["Webcam", "CCTV (HDMI via Capture Card)"], index=0)
     conf_threshold = st.slider("**Tingkat Kepercayaan Deteksi**", 0.0, 1.0, 0.5, 0.01)
     max_reps = st.number_input("**Batas Gerakan untuk Alarm**", 1, 50, 5)
 
@@ -107,10 +107,6 @@ with st.sidebar:
             x2 = st.slider(f"X2 (Kanan)", 0, 1920, 800, key=f"x2_{i}")
             y2 = st.slider(f"Y2 (Bawah)", 0, 1080, 600, key=f"y2_{i}")
             aois.append((x1, y1, x2, y2))
-
-    ip_camera_url = ""
-    if video_source == "IP Camera":
-        ip_camera_url = st.text_input("**Masukkan URL IP Camera**", "rtsp://IP_ADDRESS:554/live0.264")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -128,19 +124,19 @@ if video_source == "Webcam":
     if st.sidebar.button("\U0001F3A5 Mulai Streaming Webcam"):
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
-            st.sidebar.error("\u274C Gagal membuka webcam!")
+            st.sidebar.error("❌ Gagal membuka webcam!")
         else:
-            st.sidebar.success("\u2705 Webcam aktif!")
-elif video_source == "IP Camera":
-    if st.sidebar.button("\U0001F517 Sambungkan ke IP Camera"):
-        if ip_camera_url:
-            cap = cv2.VideoCapture(ip_camera_url)
-            if not cap.isOpened():
-                st.sidebar.error("\u274C Gagal terhubung ke IP Camera! Periksa URL.")
-            else:
-                st.sidebar.success("\u2705 IP Camera terkoneksi!")
+            st.sidebar.success("✅ Webcam aktif!")
+else:
+    cam_idx = st.sidebar.number_input("Indeks Kamera CCTV", 0, 10, 0)
+    if st.sidebar.button("\U0001F517 Sambungkan ke CCTV"):
+        cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        if not cap.isOpened():
+            st.sidebar.error("❌ Gagal terhubung ke CCTV!")
         else:
-            st.sidebar.warning("\u26A0\ufe0f URL IP Camera tidak boleh kosong!")
+            st.sidebar.success("✅ CCTV terkoneksi!")
 
 if cap and cap.isOpened():
     heatmap = np.zeros((1080, 1920), dtype=np.uint8)
@@ -152,7 +148,7 @@ if cap and cap.isOpened():
     while True:
         ret, frame = cap.read()
         if not ret:
-            status_text.error("\u274C Gagal membaca frame.")
+            status_text.error("❌ Gagal membaca frame.")
             break
         
         heatmap = (heatmap * 0.95).astype(np.uint8)
@@ -174,4 +170,4 @@ if cap and cap.isOpened():
 
     cap.release()
 else:
-    status_text.warning("\u26A0\ufe0f Silakan pilih sumber video dan pastikan kamera terhubung.")
+    status_text.warning("⚠️ Silakan pilih sumber video dan pastikan kamera terhubung.")

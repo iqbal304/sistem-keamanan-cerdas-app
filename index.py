@@ -110,7 +110,7 @@ with st.sidebar:
 
     ip_camera_url = ""
     if video_source == "IP Camera":
-        ip_camera_url = st.text_input("**Masukkan URL IP Camera**", "rtsp://192.168.0.101:554/stream")
+        ip_camera_url = st.text_input("**Masukkan URL IP Camera**", "rtsp://IP_ADDRESS:554/live0.264")
 
 col1, col2 = st.columns(2)
 with col1:

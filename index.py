@@ -1,3 +1,7 @@
+import os
+os.environ["OPENCV_VIDEOIO_DEBUG"] = "1"  # Untuk debugging
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+
 import streamlit as st
 import numpy as np
 import datetime
@@ -6,12 +10,18 @@ import pandas as pd
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
 import av
 
-# Solusi untuk masalah import
+# Solusi khusus untuk libGL error
 try:
     import cv2
+    st.success("OpenCV berhasil diimpor!")
+except ImportError as e:
+    st.error(f"Error mengimpor OpenCV: {e}")
+    st.stop()
+
+try:
     from ultralytics import YOLO
 except ImportError as e:
-    st.error(f"Error mengimpor dependensi: {e}")
+    st.error(f"Error mengimpor YOLO: {e}")
     st.stop()
 
 # Konfigurasi WebRTC
@@ -19,7 +29,7 @@ RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# Inisialisasi model dengan penanganan error
+# Inisialisasi model
 @st.cache_resource
 def load_model():
     try:
@@ -50,15 +60,13 @@ class VideoProcessor(VideoProcessorBase):
                 self.heatmap = np.zeros((h, w), dtype=np.uint8)
             
             if model is not None:
-                # Deteksi objek
                 results = model.predict(img, conf=self.conf_threshold, verbose=False)
                 
                 for result in results:
                     for box in result.boxes:
                         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                         conf = float(box.conf[0])
-                        cls_id = int(box.cls[0])
-                        label = model.names[cls_id]
+                        label = model.names[int(box.cls[0])]
 
                         if label == "person":
                             cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
@@ -70,7 +78,6 @@ class VideoProcessor(VideoProcessorBase):
                                 if x1 >= ax1 and y1 >= ay1 and x2 <= ax2 and y2 <= ay2:
                                     self.activity_logs[idx].append(datetime.datetime.now())
 
-                # Cek aktivitas mencurigakan
                 for idx in range(len(self.aois)):
                     cutoff = datetime.datetime.now() - datetime.timedelta(seconds=10)
                     self.activity_logs[idx] = [t for t in self.activity_logs[idx] if t > cutoff]
@@ -80,11 +87,10 @@ class VideoProcessor(VideoProcessorBase):
                         st.session_state['alarm'] = True
                         st.toast(f"🚨 ALARM: Gerakan mencurigakan di Zona {idx+1}!", icon="⚠️")
 
-                # Update heatmap
                 self.heatmap = (self.heatmap * 0.95).astype(np.uint8)
                 timestamp = datetime.datetime.now().strftime("%H:%M:%S")
                 self.heatmap_history.append({
-                    "time": timestamp,
+                    "time": timestamp, 
                     "activity": int(np.max(self.heatmap))
                 })
                 st.session_state['heatmap_history'] = list(self.heatmap_history)
@@ -152,4 +158,4 @@ with col2:
             st.session_state['alarm'] = False
             st.toast("Alarm dimatikan", icon="✅")
 
-st.info("ℹ️ Izinkan akses kamera saat diminta. Sistem memproses video langsung di browser Anda.")
+st.info("ℹ️ Sistem ini bekerja sepenuhnya di browser Anda. Tidak ada data video yang dikirim ke server.")

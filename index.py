@@ -2,38 +2,35 @@ import streamlit as st
 import numpy as np
 import datetime
 from collections import defaultdict, deque
-from ultralytics import YOLO
 import pandas as pd
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration, VideoProcessorBase
 import av
-import cv2  # Pastikan opencv-python-headless terinstal
 
-# Solusi alternatif jika cv2 masih bermasalah
+# Solusi untuk masalah import
 try:
     import cv2
-except ImportError:
-    st.error("OpenCV tidak terinstal. Menggunakan fallback...")
-    # Tambahkan fallback behavior di sini jika diperlukan
+    from ultralytics import YOLO
+except ImportError as e:
+    st.error(f"Error mengimpor dependensi: {e}")
+    st.stop()
 
-# Konfigurasi untuk WebRTC
+# Konfigurasi WebRTC
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# Inisialisasi model YOLOv8 dengan cache
+# Inisialisasi model dengan penanganan error
 @st.cache_resource
 def load_model():
     try:
         model = YOLO("yolov8n.pt")
-        st.success("Model YOLOv8 berhasil dimuat!")
         return model
     except Exception as e:
-        st.error(f"Gagal memuat model: {e}")
+        st.error(f"Gagal memuat model YOLO: {e}")
         return None
 
 model = load_model()
 
-# Kelas Video Processor
 class VideoProcessor(VideoProcessorBase):
     def __init__(self):
         self.conf_threshold = 0.5
@@ -53,75 +50,82 @@ class VideoProcessor(VideoProcessorBase):
                 self.heatmap = np.zeros((h, w), dtype=np.uint8)
             
             if model is not None:
-                results = model(img)
+                # Deteksi objek
+                results = model.predict(img, conf=self.conf_threshold, verbose=False)
                 
                 for result in results:
                     for box in result.boxes:
-                        x1, y1, x2, y2 = map(int, box.xyxy[0])
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                         conf = float(box.conf[0])
-                        label = result.names[int(box.cls[0])]
+                        cls_id = int(box.cls[0])
+                        label = model.names[cls_id]
 
-                        if label == "person" and conf > self.conf_threshold:
+                        if label == "person":
                             cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
                             cv2.putText(img, f"{label} {conf:.2f}", (x1, y1-10),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                             self.heatmap[y1:y2, x1:x2] += 1
 
                             for idx, (ax1, ay1, ax2, ay2) in enumerate(self.aois):
                                 if x1 >= ax1 and y1 >= ay1 and x2 <= ax2 and y2 <= ay2:
                                     self.activity_logs[idx].append(datetime.datetime.now())
 
+                # Cek aktivitas mencurigakan
                 for idx in range(len(self.aois)):
                     cutoff = datetime.datetime.now() - datetime.timedelta(seconds=10)
                     self.activity_logs[idx] = [t for t in self.activity_logs[idx] if t > cutoff]
                     
-                    if len(self.activity_logs[idx]) > self.max_reps:
-                        if not self.alarm_triggered:
-                            self.alarm_triggered = True
-                            st.session_state['alarm'] = True
-                            st.toast(f"ALARM: Gerakan mencurigakan di Zona {idx+1}!", icon="⚠️")
+                    if len(self.activity_logs[idx]) > self.max_reps and not self.alarm_triggered:
+                        self.alarm_triggered = True
+                        st.session_state['alarm'] = True
+                        st.toast(f"🚨 ALARM: Gerakan mencurigakan di Zona {idx+1}!", icon="⚠️")
 
+                # Update heatmap
                 self.heatmap = (self.heatmap * 0.95).astype(np.uint8)
                 timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-                self.heatmap_history.append({"time": timestamp, "activity": int(np.max(self.heatmap))})
+                self.heatmap_history.append({
+                    "time": timestamp,
+                    "activity": int(np.max(self.heatmap))
+                })
                 st.session_state['heatmap_history'] = list(self.heatmap_history)
             
             return av.VideoFrame.from_ndarray(img, format="bgr24")
         except Exception as e:
-            st.error(f"Error dalam pemrosesan frame: {e}")
+            st.error(f"Error pemrosesan frame: {e}")
             return frame
 
-# Konfigurasi Streamlit
+# UI Streamlit
 st.set_page_config(page_title="Smart Security System", layout="wide")
 st.title("🔒 Smart Security System - Streamlit Cloud")
 
 # Inisialisasi session state
-if 'heatmap_history' not in st.session_state:
-    st.session_state['heatmap_history'] = []
-if 'alarm' not in st.session_state:
-    st.session_state['alarm'] = False
+for key in ['heatmap_history', 'alarm']:
+    if key not in st.session_state:
+        st.session_state[key] = [] if key == 'heatmap_history' else False
 
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Pengaturan Sistem")
-    conf_threshold = st.slider("Tingkat Kepercayaan Deteksi", 0.0, 1.0, 0.5, 0.01)
-    max_reps = st.number_input("Batas Gerakan untuk Alarm", 1, 50, 5)
+    conf_threshold = st.slider("Tingkat Kepercayaan", 0.0, 1.0, 0.5, 0.01)
+    max_reps = st.number_input("Batas Gerakan Alarm", 1, 50, 5)
     
     st.subheader("📍 Zona Pengawasan (AOI)")
     num_aois = st.number_input("Jumlah Zona", 0, 5, 1)
     aois = []
     for i in range(num_aois):
-        with st.expander(f"Pengaturan Zona {i+1}"):
+        with st.expander(f"Zona {i+1}"):
             x1 = st.slider(f"X1 (Kiri)", 0, 1000, 200, key=f"x1_{i}")
             y1 = st.slider(f"Y1 (Atas)", 0, 1000, 200, key=f"y1_{i}")
             x2 = st.slider(f"X2 (Kanan)", 0, 1000, 800, key=f"x2_{i}")
             y2 = st.slider(f"Y2 (Bawah)", 0, 1000, 600, key=f"y2_{i}")
             aois.append((x1, y1, x2, y2))
 
+# Layout utama
 col1, col2 = st.columns(2)
 with col1:
     st.subheader("🎥 Live Camera Feed")
     ctx = webrtc_streamer(
-        key="smart-security",
+        key="security-cam",
         mode=WebRtcMode.SENDRECV,
         rtc_configuration=RTC_CONFIGURATION,
         video_processor_factory=VideoProcessor,
@@ -143,9 +147,9 @@ with col2:
         st.info("Menunggu data aktivitas...")
     
     if st.session_state['alarm']:
-        st.warning("🚨 ALARM AKTIF: Gerakan mencurigakan terdeteksi!")
+        st.warning("🚨 ALARM AKTIF!")
         if st.button("Matikan Alarm"):
             st.session_state['alarm'] = False
             st.toast("Alarm dimatikan", icon="✅")
 
-st.info("ℹ️ Sistem ini menggunakan WebRTC untuk streaming video langsung dari perangkat Anda. Pastikan Anda mengizinkan akses kamera.")
+st.info("ℹ️ Izinkan akses kamera saat diminta. Sistem memproses video langsung di browser Anda.")

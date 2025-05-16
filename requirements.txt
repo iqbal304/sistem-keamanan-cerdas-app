@@ -1,6 +1,6 @@
 streamlit>=1.22.0
 ultralytics>=8.0.0
-opencv-python>=4.6.0
+opencv-python-headless==4.7.0.72  # Gunakan versi headless untuk Streamlit Cloud
 numpy>=1.23.0
 pandas>=1.5.0
 av>=9.2.0

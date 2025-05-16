@@ -1,8 +1,10 @@
 streamlit>=1.22.0
-ultralytics==8.0.203  # Versi spesifik yang stabil
+ultralytics==8.0.203
 opencv-python-headless==4.7.0.72
 numpy>=1.23.0
 pandas>=1.5.0
 av>=9.2.0
 streamlit-webrtc>=0.43.4
-protobuf==3.20.3  # Versi spesifik untuk menghindari konflik
+protobuf==3.20.3
+onnxruntime==1.15.1
+torch==2.0.1

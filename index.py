@@ -1,4 +1,5 @@
 import cv2
+from pytube import YouTube
 import streamlit as st
 import numpy as np
 import datetime
@@ -27,6 +28,16 @@ def stop_alarm():
             pygame.mixer.music.stop()
     except Exception as e:
         print(f"Gagal menghentikan alarm: {e}")
+
+# Fungsi mendapatkan URL streaming dari YouTube
+def get_youtube_stream_url(youtube_url):
+    try:
+        yt = YouTube(youtube_url)
+        stream = yt.streams.filter(progressive=True, file_extension="mp4").first()
+        return stream.url if stream else None
+    except Exception as e:
+        st.error(f"Gagal mendapatkan URL streaming YouTube: {e}")
+        return None
 
 # Fungsi utama deteksi
 def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
@@ -69,7 +80,6 @@ def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
     heatmap_max = int(np.max(heatmap))
     timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
-    # Tambahkan ke grafik setiap frame agar bisa menurun jika aktivitas turun
     heatmap_history.append({"time": timestamp, "activity": heatmap_max})
 
     if heatmap_max > 5:
@@ -93,9 +103,10 @@ st.title("\U0001F512 Smart Security System")
 
 with st.sidebar:
     st.header("\u2699\ufe0f Pengaturan Sistem")
-    video_source = st.radio("**Sumber Video**", ["Webcam", "CCTV (HDMI via Capture Card)"], index=0)
+    video_source = st.radio("**Sumber Video**", ["Webcam", "CCTV (HDMI via Capture Card)", "YouTube Live"], index=0)
     conf_threshold = st.slider("**Tingkat Kepercayaan Deteksi**", 0.0, 1.0, 0.5, 0.01)
     max_reps = st.number_input("**Batas Gerakan untuk Alarm**", 1, 50, 5)
+    youtube_url = st.text_input("Masukkan URL YouTube Live", placeholder="https://www.youtube.com/...")
 
     st.subheader("\U0001F4DC Zona Pengawasan (AOI)")
     num_aois = st.number_input("Jumlah Zona", 0, 5, 1)
@@ -123,20 +134,17 @@ cap = None
 if video_source == "Webcam":
     if st.sidebar.button("\U0001F3A5 Mulai Streaming Webcam"):
         cap = cv2.VideoCapture(0)
-        if not cap.isOpened():
-            st.sidebar.error("❌ Gagal membuka webcam!")
-        else:
-            st.sidebar.success("✅ Webcam aktif!")
-else:
+elif video_source == "CCTV (HDMI via Capture Card)":
     cam_idx = st.sidebar.number_input("Indeks Kamera CCTV", 0, 10, 0)
     if st.sidebar.button("\U0001F517 Sambungkan ke CCTV"):
         cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-        if not cap.isOpened():
-            st.sidebar.error("❌ Gagal terhubung ke CCTV!")
-        else:
-            st.sidebar.success("✅ CCTV terkoneksi!")
+elif video_source == "YouTube Live":
+    if st.sidebar.button("\U0001F3A5 Mulai Streaming YouTube"):
+        youtube_stream_url = get_youtube_stream_url(youtube_url)
+        if youtube_stream_url:
+            cap = cv2.VideoCapture(youtube_stream_url)
 
 if cap and cap.isOpened():
     heatmap = np.zeros((1080, 1920), dtype=np.uint8)

@@ -23,13 +23,16 @@ def process_frame_with_yolo(frame):
 # Function to get YouTube stream URL
 def get_youtube_stream_url(youtube_url):
     ydl_opts = {
-        'format': 'best[ext=mp4]',
         'quiet': True,
-        'noplaylist': True
+        'noplaylist': True,
+        'format': 'best[ext=mp4]/best'  # Tambahkan fallback ke "best"
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(youtube_url, download=False)
-        return info['url']
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+            return info.get('url', None)
+    except yt_dlp.utils.DownloadError as e:
+        return None
 
 # Streamlit page configuration
 st.set_page_config(page_title="YOLO Object Detection", layout="wide")
@@ -67,8 +70,9 @@ elif video_source == "URL Stream":
         if stream_url:
             st.video(stream_url)
         else:
-            st.error("❌ Failed to fetch the stream URL. Please check the YouTube link.")
+            st.error("❌ Failed to fetch the stream URL. Please check the YouTube link or try a different video.")
     else:
         st.warning("⚠️ Please provide a valid YouTube Live URL in the sidebar.")
+
 
 st.success("🎉 YOLO Object Detection App is ready!")

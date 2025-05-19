@@ -8,7 +8,7 @@ import yt_dlp
 from ultralytics import YOLO
 
 # Load YOLO model
-model = torch.hub.load("ultralytics/yolov5", "yolov5n", pretrained=True)
+model = YOLO("yolov5n.pt")
 
 # Function to process frame with YOLO
 def process_frame_with_yolo(frame):

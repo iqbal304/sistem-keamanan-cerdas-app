@@ -1,7 +1,8 @@
 streamlit
-torch
 opencv-python-headless
-streamlit-webrtc
+ultralytics
+pygame
+numpy
+pandas
 pytube
 yt-dlp
-ultralytics

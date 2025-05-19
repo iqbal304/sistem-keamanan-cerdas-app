@@ -8,11 +8,12 @@ from ultralytics import YOLO
 import pygame
 import threading
 import pandas as pd
+import yt_dlp
 
 # Load model YOLOv8
 model = YOLO("yolov8n.pt")
 
-# Fungsi memainkan alarm
+# Function to play the alarm
 def play_alarm():
     try:
         pygame.mixer.init()
@@ -21,7 +22,7 @@ def play_alarm():
     except Exception as e:
         print(f"Gagal memutar alarm: {e}")
 
-# Fungsi menghentikan alarm
+# Function to stop the alarm
 def stop_alarm():
     try:
         if pygame.mixer.get_init():
@@ -29,20 +30,21 @@ def stop_alarm():
     except Exception as e:
         print(f"Gagal menghentikan alarm: {e}")
 
-# Fungsi mendapatkan URL streaming dari YouTube
-def get_youtube_stream_url(youtube_url):
-    try:
-        yt = YouTube(youtube_url)
-        stream = yt.streams.filter(progressive=True, file_extension="mp4").first()
-        return stream.url if stream else None
-    except Exception as e:
-        st.error(f"Gagal mendapatkan URL streaming YouTube: {e}")
-        return None
+# Function to get YouTube stream URL
+def get_youtube_stream(url):
+    ydl_opts = {
+        'format': 'best[ext=mp4]',
+        'quiet': True,
+        'noplaylist': True
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return info['url']
 
-# Fungsi utama deteksi
+# Main detection function
 def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
                                activity_logs, max_repeated_movements, alarm_triggered,
-                               capture_times_deque, heatmap_history):
+                               heatmap_history):
     results = model(frame)
     current_activities = defaultdict(int)
     suspicious = False
@@ -74,7 +76,7 @@ def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
             suspicious = True
             if not alarm_triggered[0]:
                 alarm_triggered[0] = True
-                st.warning(f"\U0001F6A8 **ALARM**: Gerakan mencurigakan di Zona {idx+1}!")
+                st.warning(f"\U0001F6A8 *ALARM*: Gerakan mencurigakan di Zona {idx+1}!")
                 threading.Thread(target=play_alarm, daemon=True).start()
 
     heatmap_max = int(np.max(heatmap))
@@ -82,11 +84,11 @@ def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
 
     heatmap_history.append({"time": timestamp, "activity": heatmap_max})
 
-    if heatmap_max > 5:
+    if heatmap_max > 1:
         suspicious = True
         if not alarm_triggered[0]:
             alarm_triggered[0] = True
-            st.warning("\U0001F6A8 **ALARM**: Aktivitas mencurigakan terdeteksi!")
+            st.warning("\U0001F6A8 *ALARM*: Aktivitas mencurigakan terdeteksi!")
             threading.Thread(target=play_alarm, daemon=True).start()
 
     elif heatmap_max < 1:
@@ -97,15 +99,15 @@ def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
 
     return frame
 
-# Konfigurasi Streamlit
+# Streamlit configuration
 st.set_page_config(page_title="Smart Security System", layout="wide")
 st.title("\U0001F512 Smart Security System")
 
 with st.sidebar:
     st.header("\u2699\ufe0f Pengaturan Sistem")
-    video_source = st.radio("**Sumber Video**", ["Webcam", "CCTV (HDMI via Capture Card)", "YouTube Live"], index=0)
-    conf_threshold = st.slider("**Tingkat Kepercayaan Deteksi**", 0.0, 1.0, 0.5, 0.01)
-    max_reps = st.number_input("**Batas Gerakan untuk Alarm**", 1, 50, 5)
+    video_source = st.radio("*Sumber Video*", ["Webcam", "CCTV (HDMI via Capture Card)", "YouTube Live"], index=0)
+    conf_threshold = st.slider("*Tingkat Kepercayaan Deteksi*", 0.0, 1.0, 0.5, 0.01)
+    max_reps = st.number_input("*Batas Gerakan untuk Alarm*", 1, 50, 5)
     youtube_url = st.text_input("Masukkan URL YouTube Live", placeholder="https://www.youtube.com/...")
 
     st.subheader("\U0001F4DC Zona Pengawasan (AOI)")
@@ -113,10 +115,10 @@ with st.sidebar:
     aois = []
     for i in range(num_aois):
         with st.expander(f"Pengaturan Zona {i+1}"):
-            x1 = st.slider(f"X1 (Kiri)", 0, 1920, 200, key=f"x1_{i}")
-            y1 = st.slider(f"Y1 (Atas)", 0, 1080, 200, key=f"y1_{i}")
-            x2 = st.slider(f"X2 (Kanan)", 0, 1920, 800, key=f"x2_{i}")
-            y2 = st.slider(f"Y2 (Bawah)", 0, 1080, 600, key=f"y2_{i}")
+            x1 = st.slider(f"X1 (Kiri)", 0, 640, 100, key=f"x1_{i}")
+            y1 = st.slider(f"Y1 (Atas)", 0, 360, 100, key=f"y1_{i}")
+            x2 = st.slider(f"X2 (Kanan)", 0, 640, 300, key=f"x2_{i}")
+            y2 = st.slider(f"Y2 (Bawah)", 0, 360, 300, key=f"y2_{i}")
             aois.append((x1, y1, x2, y2))
 
 col1, col2 = st.columns(2)
@@ -128,44 +130,47 @@ with col2:
     heatmap_placeholder = st.empty()
 
 status_text = st.empty()
-status_text.info("\U0001F7E2 **Sistem aktif**. Menunggu deteksi...")
+status_text.info("\U0001F7E2 *Sistem aktif*. Menunggu deteksi...")
 
 cap = None
 if video_source == "Webcam":
     if st.sidebar.button("\U0001F3A5 Mulai Streaming Webcam"):
         cap = cv2.VideoCapture(0)
+
 elif video_source == "CCTV (HDMI via Capture Card)":
     cam_idx = st.sidebar.number_input("Indeks Kamera CCTV", 0, 10, 0)
     if st.sidebar.button("\U0001F517 Sambungkan ke CCTV"):
         cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+
 elif video_source == "YouTube Live":
     if st.sidebar.button("\U0001F3A5 Mulai Streaming YouTube"):
-        youtube_stream_url = get_youtube_stream_url(youtube_url)
-        if youtube_stream_url:
-            cap = cv2.VideoCapture(youtube_stream_url)
+        if youtube_url:
+            stream_url = get_youtube_stream(youtube_url)
+            if stream_url:
+                cap = cv2.VideoCapture(stream_url)
 
 if cap and cap.isOpened():
-    heatmap = np.zeros((1080, 1920), dtype=np.uint8)
+    heatmap = np.zeros((360, 640), dtype=np.uint8)
     activity_logs = defaultdict(list)
     alarm_triggered = [False]
-    capture_times = deque()
     heatmap_history = deque(maxlen=100)
+    frame_count = 0
+    detection_interval = 5
 
     while True:
         ret, frame = cap.read()
         if not ret:
             status_text.error("❌ Gagal membaca frame.")
             break
-        
+
+        frame = cv2.resize(frame, (640, 360))
         heatmap = (heatmap * 0.95).astype(np.uint8)
 
-        frame = cv2.resize(frame, (1920, 1080))
-        frame = detect_suspicious_activity(
-            frame, model, conf_threshold, heatmap, aois,
-            activity_logs, max_reps, alarm_triggered, capture_times, heatmap_history
-        )
+        if frame_count % detection_interval == 0:
+            frame = detect_suspicious_activity(
+                frame, model, conf_threshold, heatmap, aois,
+                activity_logs, max_reps, alarm_triggered, heatmap_history
+            )
 
         camera_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
 
@@ -173,9 +178,10 @@ if cap and cap.isOpened():
         if not df_heat.empty:
             heatmap_placeholder.line_chart(df_heat.set_index("time"))
 
+        frame_count += 1
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
 else:
-    status_text.warning("⚠️ Silakan pilih sumber video dan pastikan kamera terhubung.")
+    status_text.warning("⚠ Silakan pilih sumber video dan pastikan kamera terhubung.")

@@ -5,6 +5,7 @@ from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
 import numpy as np
 from pytube import YouTube
 import yt_dlp
+from ultralytics import YOLO
 
 # Load YOLO model
 model = torch.hub.load("ultralytics/yolov5", "yolov5n", pretrained=True)

@@ -4,3 +4,4 @@ opencv-python-headless
 streamlit-webrtc
 pytube
 yt-dlp
+ultralytics

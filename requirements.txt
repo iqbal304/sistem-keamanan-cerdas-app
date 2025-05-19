@@ -1,6 +1,7 @@
-streamlit
+pytube
 opencv-python-headless
-numpy
-pygame
+streamlit
 ultralytics
+pygame
+numpy
 pandas

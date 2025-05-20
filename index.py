@@ -12,6 +12,17 @@ import pandas as pd
 import ffmpeg
 import streamlit as st
 import yt_dlp
+import time
+
+# Initialize Streamlit session state
+if 'frame_count' not in st.session_state:
+    st.session_state.frame_count = 0
+if 'alarm_triggered' not in st.session_state:
+    st.session_state.alarm_triggered = False
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+if 'cap' not in st.session_state:
+    st.session_state.cap = None
 
 # Logging setup for debugging
 logging.basicConfig(level=logging.DEBUG)
@@ -81,6 +92,28 @@ with st.sidebar:
     video_source = st.radio("*Sumber Video*", ["Webcam", "CCTV (HDMI via Capture Card)", "YouTube Live"], index=0)
     conf_threshold = st.slider("*Tingkat Kepercayaan Deteksi*", 0.0, 1.0, 0.5, 0.01)
     youtube_url = st.text_input("Masukkan URL YouTube Live", placeholder="https://www.youtube.com/...")
+    
+    if st.button("▶ Mulai Pemrosesan"):
+        st.session_state.processing = True
+        if video_source == "Webcam":
+            st.session_state.cap = cv2.VideoCapture(0)
+        elif video_source == "CCTV (HDMI via Capture Card)":
+            cam_idx = st.sidebar.number_input("Indeks Kamera CCTV", 0, 10, 0)
+            st.session_state.cap = cv2.VideoCapture(cam_idx)
+        elif video_source == "YouTube Live" and youtube_url:
+            stream_url = get_youtube_stream_ffmpeg(youtube_url)
+            if stream_url:
+                st.session_state.cap = cv2.VideoCapture(stream_url)
+            else:
+                st.error("⚠ Gagal mendapatkan URL streaming.")
+    
+    if st.button("⏹ Berhenti Pemrosesan"):
+        st.session_state.processing = False
+        if st.session_state.cap and st.session_state.cap.isOpened():
+            st.session_state.cap.release()
+        if st.session_state.alarm_triggered:
+            stop_alarm()
+            st.session_state.alarm_triggered = False
 
 col1, col2 = st.columns(2)
 with col1:
@@ -93,45 +126,20 @@ with col2:
 status_text = st.empty()
 status_text.info("\U0001F7E2 *Sistem aktif*. Menunggu deteksi...")
 
-cap = None
-if video_source == "Webcam":
-    if st.sidebar.button("\U0001F3A5 Mulai Streaming Webcam"):
-        cap = cv2.VideoCapture(0)
-
-elif video_source == "CCTV (HDMI via Capture Card)":
-    cam_idx = st.sidebar.number_input("Indeks Kamera CCTV", 0, 10, 0)
-    if st.sidebar.button("\U0001F517 Sambungkan ke CCTV"):
-        cap = cv2.VideoCapture(cam_idx)
-
-elif video_source == "YouTube Live":
-    if st.sidebar.button("\U0001F3A5 Mulai Streaming YouTube"):
-        if youtube_url:
-            stream_url = get_youtube_stream_ffmpeg(youtube_url)
-            if stream_url:
-                cap = cv2.VideoCapture(stream_url)
-            else:
-                status_text.error("⚠ Gagal mendapatkan URL streaming.")
-
-if cap:
+# Main processing loop
+if st.session_state.processing and st.session_state.cap and st.session_state.cap.isOpened():
     heatmap = np.zeros((360, 640), dtype=np.uint8)
-    activity_logs = defaultdict(list)
-    alarm_triggered = False
-    frame_count = 0
     detection_interval = 5
     
-    stop_button = st.sidebar.button("\U0001F6D1 Berhenti Streaming")
-    
-    while cap.isOpened() and not stop_button:
-        ret, frame = cap.read()
-        if not ret:
-            status_text.error("❌ Gagal membaca frame.")
-            break
-
+    ret, frame = st.session_state.cap.read()
+    if not ret:
+        status_text.error("❌ Gagal membaca frame.")
+        st.session_state.processing = False
+    else:
         frame = cv2.resize(frame, (640, 360))
         heatmap = (heatmap * 0.95).astype(np.uint8)
 
-        if frame_count % detection_interval == 0:
-            # Detection Logic
+        if st.session_state.frame_count % detection_interval == 0:
             results = model(frame)
             for result in results:
                 boxes = result.boxes.xyxy.cpu().numpy()
@@ -145,22 +153,12 @@ if cap:
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-                        # Trigger alarm if suspicious activity is detected
-                        if not alarm_triggered:
+                        if not st.session_state.alarm_triggered:
                             play_alarm()
-                            alarm_triggered = True
+                            st.session_state.alarm_triggered = True
 
-        # Show video frame
         camera_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-        frame_count += 1
-
-        # Add a small delay to prevent high CPU usage
-        time.sleep(0.01)
-
-    cap.release()
-    cv2.destroyAllWindows()
-    if alarm_triggered:
-        stop_alarm()
-
+        st.session_state.frame_count += 1
+        time.sleep(0.01)  # Prevent high CPU usage
 else:
     status_text.warning("⚠ Silakan pilih sumber video dan pastikan kamera terhubung.")

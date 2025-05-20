@@ -8,9 +8,10 @@ from ultralytics import YOLO
 import pygame
 import threading
 import pandas as pd
-from yt_dlp import YoutubeDL
+import ffmpeg
+import os
 
-# Load YOLO model
+# Load model YOLOv8
 model = YOLO("yolov8n.pt")
 
 # Function to play the alarm
@@ -31,81 +32,31 @@ def stop_alarm():
         print(f"Gagal menghentikan alarm: {e}")
 
 # Function to get YouTube stream URL
-def get_youtube_stream(url):
-    ydl_opts = {
-        'format': 'best[ext=mp4]',
-        'quiet': True,
-        'noplaylist': True,
-    }
+def get_youtube_stream_ffmpeg(url):
     try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return info["url"]
+        yt = YouTube(url)
+        stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
+        return stream.url
     except Exception as e:
-        st.error(f"Gagal mendapatkan URL streaming: {e}")
+        st.error(f"⚠ Gagal mendapatkan URL streaming YouTube: {e}")
         return None
 
-# Function to detect suspicious activity
-def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
-                               activity_logs, max_repeated_movements, alarm_triggered,
-                               heatmap_history):
-    results = model(frame)
-    current_activities = defaultdict(int)
-    suspicious = False
-
-    for result in results:
-        for box in result.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            conf = float(box.conf[0])
-            label = result.names[int(box.cls[0])]
-
-            if label == "person" and conf > conf_threshold:
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                heatmap[y1:y2, x1:x2] += 1
-
-                for idx, (ax1, ay1, ax2, ay2) in enumerate(aois):
-                    if x1 >= ax1 and y1 >= ay1 and x2 <= ax2 and y2 <= ay2:
-                        current_activities[idx] += 1
-
-    for idx, count in current_activities.items():
-        if count > 0:
-            activity_logs[idx].append(datetime.datetime.now())
-
-        cutoff = datetime.datetime.now() - datetime.timedelta(seconds=10)
-        activity_logs[idx] = [t for t in activity_logs[idx] if t > cutoff]
-
-        if len(activity_logs[idx]) > max_repeated_movements:
-            suspicious = True
-            if not alarm_triggered[0]:
-                alarm_triggered[0] = True
-                st.warning(f"\U0001F6A8 *ALARM*: Gerakan mencurigakan di Zona {idx + 1}!")
-                threading.Thread(target=play_alarm, daemon=True).start()
-
-    heatmap_max = int(np.max(heatmap))
-    timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-
-    heatmap_history.append({"time": timestamp, "activity": heatmap_max})
-
-    if heatmap_max > 1:
-        suspicious = True
-        if not alarm_triggered[0]:
-            alarm_triggered[0] = True
-            st.warning("\U0001F6A8 *ALARM*: Aktivitas mencurigakan terdeteksi!")
-            threading.Thread(target=play_alarm, daemon=True).start()
-
-    elif heatmap_max < 1:
-        if alarm_triggered[0]:
-            alarm_triggered[0] = False
-            stop_alarm()
-            st.info("\u2705 Tidak ada aktivitas mencurigakan. Alarm dimatikan.")
-
-    return frame
+# Function to read video using FFmpeg
+def read_video_ffmpeg(source):
+    try:
+        process = (
+            ffmpeg.input(source)
+            .output('pipe:', format='rawvideo', pix_fmt='rgb24')
+            .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True)
+        )
+        return process
+    except Exception as e:
+        st.error(f"⚠ Gagal membaca video dengan FFmpeg: {e}")
+        return None
 
 # Streamlit configuration
-st.set_page_config(page_title="Smart Security System", layout="wide")
-st.title("\U0001F512 Smart Security System")
+st.set_page_config(page_title="Smart Security System with FFmpeg", layout="wide")
+st.title("\U0001F512 Smart Security System with FFmpeg")
 
 with st.sidebar:
     st.header("\u2699\ufe0f Pengaturan Sistem")
@@ -113,17 +64,6 @@ with st.sidebar:
     conf_threshold = st.slider("*Tingkat Kepercayaan Deteksi*", 0.0, 1.0, 0.5, 0.01)
     max_reps = st.number_input("*Batas Gerakan untuk Alarm*", 1, 50, 5)
     youtube_url = st.text_input("Masukkan URL YouTube Live", placeholder="https://www.youtube.com/...")
-
-    st.subheader("\U0001F4DC Zona Pengawasan (AOI)")
-    num_aois = st.number_input("Jumlah Zona", 0, 5, 1)
-    aois = []
-    for i in range(num_aois):
-        with st.expander(f"Pengaturan Zona {i + 1}"):
-            x1 = st.slider(f"X1 (Kiri)", 0, 640, 100, key=f"x1_{i}")
-            y1 = st.slider(f"Y1 (Atas)", 0, 360, 100, key=f"y1_{i}")
-            x2 = st.slider(f"X2 (Kanan)", 0, 640, 300, key=f"x2_{i}")
-            y2 = st.slider(f"Y2 (Bawah)", 0, 360, 300, key=f"y2_{i}")
-            aois.append((x1, y1, x2, y2))
 
 col1, col2 = st.columns(2)
 with col1:
@@ -144,16 +84,16 @@ if video_source == "Webcam":
 elif video_source == "CCTV (HDMI via Capture Card)":
     cam_idx = st.sidebar.number_input("Indeks Kamera CCTV", 0, 10, 0)
     if st.sidebar.button("\U0001F517 Sambungkan ke CCTV"):
-        cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(cam_idx)
 
 elif video_source == "YouTube Live":
     if st.sidebar.button("\U0001F3A5 Mulai Streaming YouTube"):
         if youtube_url:
-            stream_url = get_youtube_stream(youtube_url)
+            stream_url = get_youtube_stream_ffmpeg(youtube_url)
             if stream_url:
-                cap = cv2.VideoCapture(stream_url)
+                cap = read_video_ffmpeg(stream_url)
 
-if cap and cap.isOpened():
+if cap:
     heatmap = np.zeros((360, 640), dtype=np.uint8)
     activity_logs = defaultdict(list)
     alarm_triggered = [False]
@@ -162,17 +102,23 @@ if cap and cap.isOpened():
     detection_interval = 5
 
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            status_text.error("❌ Gagal membaca frame.")
-            break
+        if video_source == "YouTube Live":
+            in_bytes = cap.stdout.read(640 * 360 * 3)
+            if not in_bytes:
+                break
+            frame = np.frombuffer(in_bytes, np.uint8).reshape([360, 640, 3])
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                status_text.error("❌ Gagal membaca frame.")
+                break
 
         frame = cv2.resize(frame, (640, 360))
         heatmap = (heatmap * 0.95).astype(np.uint8)
 
         if frame_count % detection_interval == 0:
             frame = detect_suspicious_activity(
-                frame, model, conf_threshold, heatmap, aois,
+                frame, model, conf_threshold, heatmap, [],  # AOI kosong sementara
                 activity_logs, max_reps, alarm_triggered, heatmap_history
             )
 
@@ -186,6 +132,10 @@ if cap and cap.isOpened():
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    cap.release()
+    if video_source == "YouTube Live":
+        cap.terminate()
+    else:
+        cap.release()
+
 else:
     status_text.warning("⚠ Silakan pilih sumber video dan pastikan kamera terhubung.")

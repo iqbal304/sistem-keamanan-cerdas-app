@@ -32,14 +32,15 @@ def stop_alarm():
 
 # Function to get YouTube stream URL
 def get_youtube_stream(url):
-    ydl_opts = {
-        'format': 'best[ext=mp4]',
-        'quiet': True,
-        'noplaylist': True
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        return info['url']
+ydl_opts = {
+    'format': 'best[ext=mp4]',  # Pilih format terbaik dengan ekstensi MP4
+    'quiet': True,             # Nonaktifkan log output dari yt_dlp
+    'noplaylist': True,        # Hanya unduh video tunggal
+    'postprocessors': [{
+        'key': 'FFmpegVideoConvertor',
+        'preferedformat': 'mp4',  # Konversi format video ke MP4 jika diperlukan
+    }]
+}
 
 # Main detection function
 def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,

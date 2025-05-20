@@ -1,6 +1,6 @@
 # Core Requirements
 streamlit
-opencv-python
+opencv-python-headless
 ultralytics
 pygame
 yt-dlp

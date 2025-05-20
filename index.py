@@ -1,7 +1,7 @@
+import os
 import cv2
-from pytube import YouTube
-import yt_dlp
-import streamlit as st
+import asyncio
+import logging
 import numpy as np
 import datetime
 from collections import defaultdict, deque
@@ -10,10 +10,31 @@ import pygame
 import threading
 import pandas as pd
 import ffmpeg
-import os
+import streamlit as st
+import yt_dlp
 
-# Load model YOLOv8
-model = YOLO("yolov8n.pt")
+# Logging setup for debugging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+logger.debug("Debugging aktif.")
+
+# Set YOLO configuration directory
+os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
+
+# Ensure an asyncio loop is available
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+logger.debug("Event loop asyncio sudah siap.")
+
+# Load YOLOv8 model
+try:
+    model = YOLO("yolov8n.pt")
+    logger.debug("Model YOLOv8 berhasil dimuat.")
+except RuntimeError as e:
+    logger.error(f"Kesalahan saat memuat model YOLOv8: {e}. Pastikan file model tidak rusak.")
+    raise e
 
 # Function to play the alarm
 def play_alarm():
@@ -22,7 +43,7 @@ def play_alarm():
         pygame.mixer.music.load("alarm system.mp3")
         pygame.mixer.music.play(-1)
     except Exception as e:
-        print(f"Gagal memutar alarm: {e}")
+        logger.error(f"Gagal memutar alarm: {e}")
 
 # Function to stop the alarm
 def stop_alarm():
@@ -30,14 +51,10 @@ def stop_alarm():
         if pygame.mixer.get_init():
             pygame.mixer.music.stop()
     except Exception as e:
-        print(f"Gagal menghentikan alarm: {e}")
+        logger.error(f"Gagal menghentikan alarm: {e}")
 
 # Function to get YouTube stream URL
 def get_youtube_stream_ffmpeg(url):
-    """
-    Mendapatkan URL streaming langsung dari video YouTube menggunakan yt_dlp.
-    Secara otomatis memilih format terbaik yang tersedia.
-    """
     try:
         ydl_opts = {
             'quiet': True,
@@ -54,42 +71,15 @@ def get_youtube_stream_ffmpeg(url):
     except Exception as e:
         st.error(f"⚠ Terjadi kesalahan: {e}")
     return None
-    
-def debug_available_formats(url):
-    """
-    Debug untuk melihat format yang tersedia pada URL YouTube.
-    """
-    try:
-        with yt_dlp.YoutubeDL({'quiet': False}) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-            formats = info_dict.get('formats', [])
-            for f in formats:
-                print(f"Format: {f.get('format')} | URL: {f.get('url')}")
-    except Exception as e:
-        print(f"⚠ Gagal memuat format: {e}")
-
-# Function to read video using FFmpeg
-def read_video_ffmpeg(source):
-    try:
-        process = (
-            ffmpeg.input(source)
-            .output('pipe:', format='rawvideo', pix_fmt='rgb24')
-            .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True)
-        )
-        return process
-    except Exception as e:
-        st.error(f"⚠ Gagal membaca video dengan FFmpeg: {e}")
-        return None
 
 # Streamlit configuration
-st.set_page_config(page_title="Smart Security System with FFmpeg", layout="wide")
-st.title("\U0001F512 Smart Security System with FFmpeg")
+st.set_page_config(page_title="Smart Security System with YOLOv8", layout="wide")
+st.title("\U0001F512 Smart Security System with YOLOv8")
 
 with st.sidebar:
     st.header("\u2699\ufe0f Pengaturan Sistem")
     video_source = st.radio("*Sumber Video*", ["Webcam", "CCTV (HDMI via Capture Card)", "YouTube Live"], index=0)
     conf_threshold = st.slider("*Tingkat Kepercayaan Deteksi*", 0.0, 1.0, 0.5, 0.01)
-    max_reps = st.number_input("*Batas Gerakan untuk Alarm*", 1, 50, 5)
     youtube_url = st.text_input("Masukkan URL YouTube Live", placeholder="https://www.youtube.com/...")
 
 col1, col2 = st.columns(2)
@@ -116,7 +106,6 @@ elif video_source == "CCTV (HDMI via Capture Card)":
 elif video_source == "YouTube Live":
     if st.sidebar.button("\U0001F3A5 Mulai Streaming YouTube"):
         if youtube_url:
-            debug_available_formats(youtube_url)  # Debug untuk memastikan format tersedia
             stream_url = get_youtube_stream_ffmpeg(youtube_url)
             if stream_url:
                 cap = cv2.VideoCapture(stream_url)
@@ -126,46 +115,47 @@ elif video_source == "YouTube Live":
 if cap:
     heatmap = np.zeros((360, 640), dtype=np.uint8)
     activity_logs = defaultdict(list)
-    alarm_triggered = [False]
-    heatmap_history = deque(maxlen=100)
+    alarm_triggered = False
     frame_count = 0
     detection_interval = 5
 
     while True:
-        if video_source == "YouTube Live":
-            in_bytes = cap.stdout.read(640 * 360 * 3)
-            if not in_bytes:
-                break
-            frame = np.frombuffer(in_bytes, np.uint8).reshape([360, 640, 3])
-        else:
-            ret, frame = cap.read()
-            if not ret:
-                status_text.error("❌ Gagal membaca frame.")
-                break
+        ret, frame = cap.read()
+        if not ret:
+            status_text.error("❌ Gagal membaca frame.")
+            break
 
         frame = cv2.resize(frame, (640, 360))
         heatmap = (heatmap * 0.95).astype(np.uint8)
 
         if frame_count % detection_interval == 0:
-            frame = detect_suspicious_activity(
-                frame, model, conf_threshold, heatmap, [],  # AOI kosong sementara
-                activity_logs, max_reps, alarm_triggered, heatmap_history
-            )
+            # Detection Logic
+            results = model(frame)
+            for result in results:
+                boxes = result.boxes.xyxy.cpu().numpy()
+                confidences = result.boxes.conf.cpu().numpy()
+                class_ids = result.boxes.cls.cpu().numpy()
 
+                for box, confidence, class_id in zip(boxes, confidences, class_ids):
+                    if confidence > conf_threshold:
+                        x1, y1, x2, y2 = map(int, box)
+                        label = f"{model.names[int(class_id)]} ({confidence:.2f})"
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                        # Trigger alarm if suspicious activity is detected
+                        if not alarm_triggered:
+                            play_alarm()
+                            alarm_triggered = True
+
+        # Show video frame
         camera_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-
-        df_heat = pd.DataFrame(heatmap_history)
-        if not df_heat.empty:
-            heatmap_placeholder.line_chart(df_heat.set_index("time"))
-
         frame_count += 1
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    if video_source == "YouTube Live":
-        cap.terminate()
-    else:
-        cap.release()
+    cap.release()
 
 else:
     status_text.warning("⚠ Silakan pilih sumber video dan pastikan kamera terhubung.")

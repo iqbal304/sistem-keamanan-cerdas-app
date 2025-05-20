@@ -36,11 +36,12 @@ def stop_alarm():
 def get_youtube_stream_ffmpeg(url):
     """
     Mendapatkan URL streaming langsung dari video YouTube menggunakan yt_dlp.
+    Secara otomatis memilih format terbaik yang tersedia.
     """
     try:
         ydl_opts = {
             'quiet': True,
-            'format': 'best[ext=mp4]',  # Memilih format terbaik dengan ekstensi MP4
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=False)
@@ -102,7 +103,7 @@ elif video_source == "YouTube Live":
         if youtube_url:
             stream_url = get_youtube_stream_ffmpeg(youtube_url)
             if stream_url:
-                cap = read_video_ffmpeg(stream_url)
+                cap = cv2.VideoCapture(stream_url)
 
 if cap:
     heatmap = np.zeros((360, 640), dtype=np.uint8)

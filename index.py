@@ -41,17 +41,32 @@ def get_youtube_stream_ffmpeg(url):
     try:
         ydl_opts = {
             'quiet': True,
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(url, download=False)
             video_url = info_dict.get('url', None)
             if not video_url:
-                raise ValueError("Tidak dapat menemukan URL streaming.")
+                raise ValueError("URL video streaming tidak ditemukan.")
             return video_url
-    except Exception as e:
+    except yt_dlp.utils.DownloadError as e:
         st.error(f"⚠ Gagal mendapatkan URL streaming YouTube: {e}")
-        return None
+    except Exception as e:
+        st.error(f"⚠ Terjadi kesalahan: {e}")
+    return None
+    
+def debug_available_formats(url):
+    """
+    Debug untuk melihat format yang tersedia pada URL YouTube.
+    """
+    try:
+        with yt_dlp.YoutubeDL({'quiet': False}) as ydl:
+            info_dict = ydl.extract_info(url, download=False)
+            formats = info_dict.get('formats', [])
+            for f in formats:
+                print(f"Format: {f.get('format')} | URL: {f.get('url')}")
+    except Exception as e:
+        print(f"⚠ Gagal memuat format: {e}")
 
 # Function to read video using FFmpeg
 def read_video_ffmpeg(source):
@@ -101,9 +116,12 @@ elif video_source == "CCTV (HDMI via Capture Card)":
 elif video_source == "YouTube Live":
     if st.sidebar.button("\U0001F3A5 Mulai Streaming YouTube"):
         if youtube_url:
+            debug_available_formats(youtube_url)  # Debug untuk memastikan format tersedia
             stream_url = get_youtube_stream_ffmpeg(youtube_url)
             if stream_url:
                 cap = cv2.VideoCapture(stream_url)
+            else:
+                status_text.error("⚠ Gagal mendapatkan URL streaming.")
 
 if cap:
     heatmap = np.zeros((360, 640), dtype=np.uint8)

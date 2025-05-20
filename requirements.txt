@@ -1,8 +1,9 @@
-streamlit
 opencv-python-headless
+streamlit
 ultralytics
 pygame
-numpy
 pandas
-pytube
 yt-dlp
+numpy
+pytube
+ffmpeg-python

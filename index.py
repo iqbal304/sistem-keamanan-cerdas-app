@@ -13,206 +13,145 @@ import ffmpeg
 import streamlit as st
 import yt_dlp
 
-# Konfigurasi logging untuk debugging
+# Konfigurasi logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-logger.debug("Debugging aktif.")
 
-# Set direktori konfigurasi YOLO
-os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
-
-# Memastikan loop asyncio tersedia
-try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-logger.debug("Event loop asyncio sudah siap.")
-
-# Memuat model YOLOv8
+# Inisialisasi model YOLO
 try:
     model = YOLO("yolov8n.pt")
-    logger.debug("Model YOLOv8 berhasil dimuat.")
-except RuntimeError as e:
-    logger.error(f"Kesalahan saat memuat model YOLOv8: {e}. Pastikan file model tidak rusak.")
-    raise e
+except Exception as e:
+    st.error(f"Gagal memuat model: {e}")
+    st.stop()
 
-# Fungsi untuk memutar alarm
+# Fungsi alarm
 def play_alarm():
     try:
         pygame.mixer.init()
         pygame.mixer.music.load("alarm.mp3")
         pygame.mixer.music.play(-1)
     except Exception as e:
-        logger.error(f"Gagal memutar alarm: {e}")
+        logger.error(f"Error alarm: {e}")
 
-# Fungsi untuk menghentikan alarm
 def stop_alarm():
     try:
-        if pygame.mixer.get_init():
-            pygame.mixer.music.stop()
-    except Exception as e:
-        logger.error(f"Gagal menghentikan alarm: {e}")
+        pygame.mixer.music.stop()
+    except:
+        pass
 
-# Fungsi untuk mendapatkan URL stream YouTube yang diperbaiki
-def get_youtube_stream_url(url):
+# Fungsi YouTube stream
+def get_youtube_stream(url):
     try:
-        ydl_opts = {
-            'quiet': True,
-            'format': 'best',  # Format terbaik yang tersedia
-            'extract_flat': True,
-        }
-        
+        ydl_opts = {'format': 'best'}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(url, download=False)
-            
-            # Mencari URL stream dengan kualitas terbaik
-            if 'formats' in info_dict:
-                for f in info_dict['formats']:
-                    if f.get('protocol', '').startswith('http') and f.get('ext') == 'mp4':
-                        return f['url']
-            
-            # Jika tidak ditemukan format mp4, coba format lain
-            return info_dict.get('url', None)
-            
-    except yt_dlp.utils.DownloadError as e:
-        st.error(f"⚠ Gagal mendapatkan URL streaming YouTube: {e}")
+            info = ydl.extract_info(url, download=False)
+            return info['url']
     except Exception as e:
-        st.error(f"⚠ Terjadi kesalahan: {e}")
-    return None
+        st.error(f"Error YouTube: {e}")
+        return None
 
-# Konfigurasi Streamlit
-st.set_page_config(page_title="Smart Security System with YOLOv8", layout="wide")
-st.title("\U0001F512 Sistem Keamanan Cerdas dengan YOLOv8")
+# Antarmuka Streamlit
+st.set_page_config(page_title="Smart Security System", layout="wide")
+st.title("Sistem Keamanan Cerdas")
 
+# Sidebar
 with st.sidebar:
-    st.header("\u2699\ufe0f Pengaturan Sistem")
-    video_source = st.radio("*Sumber Video*", ["Webcam", "CCTV (HDMI via Capture Card)", "YouTube Live"], index=0)
-    conf_threshold = st.slider("*Tingkat Kepercayaan Deteksi*", 0.0, 1.0, 0.5, 0.01)
+    st.header("Pengaturan")
+    video_source = st.radio("Sumber Video", 
+                           ["Webcam", "CCTV", "YouTube"])
     
-    # Hanya tampilkan input URL YouTube jika sumber video YouTube Live dipilih
+    conf_threshold = st.slider("Threshold Deteksi", 0.1, 0.9, 0.5)
+    
     youtube_url = ""
-    if video_source == "YouTube Live":
-        youtube_url = st.text_input("Masukkan URL YouTube Live", placeholder="https://www.youtube.com/watch?v=...")
+    if video_source == "YouTube":
+        youtube_url = st.text_input("URL YouTube")
 
+# Area tampilan
 col1, col2 = st.columns(2)
-with col1:
-    st.subheader("\U0001F3A5 Live Camera Feed")
-    camera_placeholder = st.empty()
-with col2:
-    st.subheader("\U0001F4CA Grafik Aktivitas")
-    heatmap_placeholder = st.empty()
+frame_placeholder = col1.empty()
+heatmap_placeholder = col2.empty()
+status = st.empty()
 
-status_text = st.empty()
-status_text.info("\U0001F7E2 *Sistem aktif*. Menunggu deteksi...")
+# Variabel kontrol
+is_running = False
+stop_stream = False
 
-# Variabel global untuk kontrol streaming
-streaming_active = False
-stop_button_pressed = False
-
-def start_streaming():
-    global streaming_active, stop_button_pressed
+def video_loop():
+    global is_running, stop_stream
     
     cap = None
     try:
         if video_source == "Webcam":
             cap = cv2.VideoCapture(0)
-        elif video_source == "CCTV (HDMI via Capture Card)":
-            cam_idx = st.session_state.get('cam_idx', 0)
-            cap = cv2.VideoCapture(cam_idx)
-        elif video_source == "YouTube Live" and youtube_url:
-            stream_url = get_youtube_stream_url(youtube_url)
+        elif video_source == "CCTV":
+            cap = cv2.VideoCapture(1)
+        elif video_source == "YouTube" and youtube_url:
+            stream_url = get_youtube_stream(youtube_url)
             if stream_url:
                 cap = cv2.VideoCapture(stream_url)
-            else:
-                status_text.error("⚠ Gagal mendapatkan URL streaming YouTube.")
-                return
         
-        if cap is None or not cap.isOpened():
-            status_text.error("⚠ Gagal membuka sumber video.")
+        if not cap or not cap.isOpened():
+            status.error("Gagal membuka video")
             return
+            
+        is_running = True
+        stop_stream = False
+        heatmap = np.zeros((480, 640), dtype=np.float32)
         
-        streaming_active = True
-        stop_button_pressed = False
-        
-        heatmap = np.zeros((360, 640), dtype=np.uint8)
-        activity_logs = defaultdict(list)
-        alarm_triggered = False
-        frame_count = 0
-        detection_interval = 5
-        
-        while streaming_active and not stop_button_pressed:
+        while is_running and not stop_stream:
             ret, frame = cap.read()
             if not ret:
-                status_text.warning("⚠ Frame tidak terbaca. Mencoba lagi...")
+                status.warning("Gagal membaca frame")
                 continue
-            
-            frame = cv2.resize(frame, (640, 360))
-            heatmap = (heatmap * 0.95).astype(np.uint8)
-            
-            if frame_count % detection_interval == 0:
-                # Logika Deteksi
-                results = model(frame, conf=conf_threshold)
                 
-                for result in results:
-                    boxes = result.boxes.xyxy.cpu().numpy()
-                    confidences = result.boxes.conf.cpu().numpy()
-                    class_ids = result.boxes.cls.cpu().numpy()
+            # Deteksi objek
+            results = model(frame, conf=conf_threshold)
+            
+            # Gambar bounding box
+            for result in results:
+                for box in result.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cv2.rectangle(frame, (x1,y1), (x2,y2), (0,255,0), 2)
                     
-                    for box, confidence, class_id in zip(boxes, confidences, class_ids):
-                        x1, y1, x2, y2 = map(int, box)
-                        label = f"{model.names[int(class_id)]} ({confidence:.2f})"
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                        
-                        # Update heatmap
-                        center_x, center_y = (x1 + x2) // 2, (y1 + y2) // 2
-                        heatmap[center_y-5:center_y+5, center_x-5:center_x+5] += 25
-                        
-                        # Trigger alarm jika aktivitas mencurigakan terdeteksi
-                        if model.names[int(class_id)] in ['person', 'dog', 'cat'] and not alarm_triggered:
-                            play_alarm()
-                            alarm_triggered = True
-                            status_text.warning("\U0001F6A8 Aktivitas mencurigakan terdeteksi!")
+                    # Update heatmap
+                    cx, cy = (x1+x2)//2, (y1+y2)//2
+                    heatmap[cy-10:cy+10, cx-10:cx+10] += 1
+                    
+                    # Trigger alarm
+                    if box.cls in [0, 15, 16]:  # Orang, kucing, anjing
+                        play_alarm()
             
-            # Normalisasi heatmap untuk visualisasi
-            heatmap_viz = cv2.normalize(heatmap, None, 0, 255, cv2.NORM_MINMAX)
-            heatmap_viz = cv2.applyColorMap(heatmap_viz, cv2.COLORMAP_JET)
+            # Normalisasi heatmap
+            heatmap_norm = cv2.normalize(heatmap, None, 0, 255, cv2.NORM_MINMAX)
+            heatmap_color = cv2.applyColorMap(heatmap_norm.astype(np.uint8), cv2.COLORMAP_JET)
             
-            # Menampilkan frame video dan heatmap
-            camera_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
-            heatmap_placeholder.image(cv2.cvtColor(heatmap_viz, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+            # Tampilkan frame
+            frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            heatmap_placeholder.image(heatmap_color)
             
-            frame_count += 1
-            
-            # Memberi waktu untuk thread lain
-            cv2.waitKey(1)
+            # Reduksi heatmap
+            heatmap *= 0.95
             
     except Exception as e:
-        logger.error(f"Error dalam streaming: {e}")
-        status_text.error(f"⚠ Error: {str(e)}")
+        status.error(f"Error: {e}")
     finally:
-        if cap is not None:
+        if cap:
             cap.release()
         stop_alarm()
-        streaming_active = False
+        is_running = False
 
-# Tombol kontrol streaming
-if not streaming_active:
-    if st.sidebar.button("\U0001F3A5 Mulai Streaming"):
-        stop_button_pressed = False
-        threading.Thread(target=start_streaming, daemon=True).start()
+# Tombol kontrol
+if not is_running:
+    if st.sidebar.button("Mulai Deteksi"):
+        threading.Thread(target=video_loop, daemon=True).start()
 else:
-    if st.sidebar.button("\U00023F9 Hentikan Streaming"):
-        stop_button_pressed = True
-        streaming_active = False
-        status_text.info("\U0001F7E2 Streaming dihentikan.")
+    if st.sidebar.button("Berhenti"):
+        stop_stream = True
 
-# Catatan penting
-st.sidebar.markdown("---")
 st.sidebar.info("""
-**Catatan Penggunaan:**
-1. Untuk YouTube Live, pastikan URL valid dan tidak memiliki restriksi
-2. Tunggu beberapa detik setelah menekan tombol mulai
-3. Alarm akan berbunyi saat terdeteksi orang/hewan
-4. Pastikan file alarm.mp3 ada di direktori yang sama
+**Panduan:**
+1. Pilih sumber video
+2. Atur threshold deteksi
+3. Klik Mulai Deteksi
+4. Alarm akan berbunyi saat terdeteksi objek mencurigakan
 """)

@@ -33,10 +33,20 @@ def stop_alarm():
 
 # Function to get YouTube stream URL
 def get_youtube_stream_ffmpeg(url):
+    """
+    Mendapatkan URL streaming langsung dari video YouTube menggunakan yt_dlp.
+    """
     try:
-        yt = YouTube(url)
-        stream = yt.streams.filter(progressive=True, file_extension='mp4').first()
-        return stream.url
+        ydl_opts = {
+            'quiet': True,
+            'format': 'best[ext=mp4]',  # Memilih format terbaik dengan ekstensi MP4
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=False)
+            video_url = info_dict.get('url', None)
+            if not video_url:
+                raise ValueError("Tidak dapat menemukan URL streaming.")
+            return video_url
     except Exception as e:
         st.error(f"⚠ Gagal mendapatkan URL streaming YouTube: {e}")
         return None

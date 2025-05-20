@@ -118,8 +118,10 @@ if cap:
     alarm_triggered = False
     frame_count = 0
     detection_interval = 5
-
-    while True:
+    
+    stop_button = st.sidebar.button("\U0001F6D1 Berhenti Streaming")
+    
+    while cap.isOpened() and not stop_button:
         ret, frame = cap.read()
         if not ret:
             status_text.error("❌ Gagal membaca frame.")
@@ -152,10 +154,13 @@ if cap:
         camera_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
         frame_count += 1
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        # Add a small delay to prevent high CPU usage
+        time.sleep(0.01)
 
     cap.release()
+    cv2.destroyAllWindows()
+    if alarm_triggered:
+        stop_alarm()
 
 else:
     status_text.warning("⚠ Silakan pilih sumber video dan pastikan kamera terhubung.")

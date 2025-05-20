@@ -1,19 +1,9 @@
-# Core Requirements
-streamlit
 opencv-python-headless
+streamlit
 ultralytics
 pygame
+pandas
 yt-dlp
 numpy
-pandas
-
-# Additional Processing
+pytube
 ffmpeg-python
-
-# Optional (for better performance)
-torch
-torchvision
-
-# Logging and Utilities
-python-dotenv
-tqdm

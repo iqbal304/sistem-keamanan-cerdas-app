@@ -8,9 +8,9 @@ from ultralytics import YOLO
 import pygame
 import threading
 import pandas as pd
-import yt_dlp
+from yt_dlp import YoutubeDL
 
-# Load model YOLOv8
+# Load YOLO model
 model = YOLO("yolov8n.pt")
 
 # Function to play the alarm
@@ -32,17 +32,20 @@ def stop_alarm():
 
 # Function to get YouTube stream URL
 def get_youtube_stream(url):
-ydl_opts = {
-    'format': 'best[ext=mp4]',  # Pilih format terbaik dengan ekstensi MP4
-    'quiet': True,             # Nonaktifkan log output dari yt_dlp
-    'noplaylist': True,        # Hanya unduh video tunggal
-    'postprocessors': [{
-        'key': 'FFmpegVideoConvertor',
-        'preferedformat': 'mp4',  # Konversi format video ke MP4 jika diperlukan
-    }]
-}
+    ydl_opts = {
+        'format': 'best[ext=mp4]',
+        'quiet': True,
+        'noplaylist': True,
+    }
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return info["url"]
+    except Exception as e:
+        st.error(f"Gagal mendapatkan URL streaming: {e}")
+        return None
 
-# Main detection function
+# Function to detect suspicious activity
 def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
                                activity_logs, max_repeated_movements, alarm_triggered,
                                heatmap_history):
@@ -58,7 +61,7 @@ def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
 
             if label == "person" and conf > conf_threshold:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1-10),
+                cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 heatmap[y1:y2, x1:x2] += 1
 
@@ -77,7 +80,7 @@ def detect_suspicious_activity(frame, model, conf_threshold, heatmap, aois,
             suspicious = True
             if not alarm_triggered[0]:
                 alarm_triggered[0] = True
-                st.warning(f"\U0001F6A8 *ALARM*: Gerakan mencurigakan di Zona {idx+1}!")
+                st.warning(f"\U0001F6A8 *ALARM*: Gerakan mencurigakan di Zona {idx + 1}!")
                 threading.Thread(target=play_alarm, daemon=True).start()
 
     heatmap_max = int(np.max(heatmap))
@@ -115,7 +118,7 @@ with st.sidebar:
     num_aois = st.number_input("Jumlah Zona", 0, 5, 1)
     aois = []
     for i in range(num_aois):
-        with st.expander(f"Pengaturan Zona {i+1}"):
+        with st.expander(f"Pengaturan Zona {i + 1}"):
             x1 = st.slider(f"X1 (Kiri)", 0, 640, 100, key=f"x1_{i}")
             y1 = st.slider(f"Y1 (Atas)", 0, 360, 100, key=f"y1_{i}")
             x2 = st.slider(f"X2 (Kanan)", 0, 640, 300, key=f"x2_{i}")
